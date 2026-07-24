@@ -655,9 +655,11 @@ lv* plove(char*t,int*i,int*f,int*n){
 int cumulative_month_days[12]={0,31,59,90,120,151,181,212,243,273,304,334};
 int leap_year(int year){return year%400==0?1: year%100==0?0: year%4==0?1: 0;}
 time_t parts_to_epoch(struct tm *p){
-	return p->tm_sec+p->tm_min*60+p->tm_hour*3600+
-	       (cumulative_month_days[p->tm_mon]+(p->tm_mon>=2&&leap_year(p->tm_year+1900)))*86400+
-	       (p->tm_mday-1)*86400+(p->tm_year-70)*31536000l+((p->tm_year-69)/4)*86400-((p->tm_year-1)/100)*86400+((p->tm_year+299)/400)*86400;
+	/* Use 64-bit intermediates: on Windows/MSVC long is 32-bit and overflows near 2038. */
+	return (time_t)((long long)p->tm_sec+(long long)p->tm_min*60+(long long)p->tm_hour*3600+
+	       (long long)(cumulative_month_days[p->tm_mon]+(p->tm_mon>=2&&leap_year(p->tm_year+1900)))*86400+
+	       (long long)(p->tm_mday-1)*86400+(long long)(p->tm_year-70)*31536000ll+
+	       ((long long)(p->tm_year-69)/4)*86400-((long long)(p->tm_year-1)/100)*86400+((long long)(p->tm_year+299)/400)*86400);
 }
 int format_has_names(lv*x){
 	#define fc x->sv[f]
@@ -765,7 +767,7 @@ void format_type(str*r,lv*a,char t,int n,int d,int lf,int pz,int*f,char*c){
 	else if(t=='j'){str v=str_new();fjson(&v,a    );op=lmstr(v)->sv;}
 	else if(t=='J'){str v=str_new();flove(&v,a    );op=lmstr(v)->sv;}
 	else if(t=='q'){str v=str_new();fjson(&v,ls(a));op=lmstr(v)->sv;}
-	else if(t=='e'){time_t v=ln(a);strftime(o,NUM,"%FT%TZ",gmtime(&v));}
+	else if(t=='e'){time_t v=ln(a);struct tm*p=gmtime(&v);if(p)strftime(o,NUM,"%FT%TZ",p);}
 	else if(t=='p'){
 		lv*isodate=lmistr("%[year]04i-%[month]02i-%[day]02iT%[hour]02i:%[minute]02i:%[second]02iZ%n%m");
 		snprintf(o,NUM,"%s",l_format(isodate,ld(a))->sv);

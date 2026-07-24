@@ -5,3 +5,4 @@ js/build/
 docs/*.html
 *.o
 tools/twine/format.js
+deps/

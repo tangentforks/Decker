@@ -1,13 +1,29 @@
 // Lil Terminal
 #include "lil.h"
 #include "dom.h"
-#ifndef __COSMOPOLITAN__
+#if !defined(__COSMOPOLITAN__) && !defined(_WIN32)
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
 
+#ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
+#include <locale.h>
+// bestline is POSIX-only; provide a minimal line reader for Windows builds.
+static char*bestline(const char*prompt){
+	char buf[8192];size_t n;char*r;
+	fputs(prompt,stdout);fflush(stdout);
+	if(!fgets(buf,sizeof(buf),stdin))return NULL;
+	n=strlen(buf);if(n&&(buf[n-1]=='\n'||buf[n-1]=='\r'))buf[--n]=0;
+	if(n&&buf[n-1]=='\r')buf[--n]=0;
+	r=malloc(n+1);if(!r)return NULL;memcpy(r,buf,n+1);return r;
+}
+static char*bestlineWithHistory(const char*prompt,const char*name){(void)name;return bestline(prompt);}
+#else
 #include "lib/bestline.h"
 #include "lib/bestline.c"
+#endif
 
 lv*n_exit(lv*self,lv*a){(void)self;exit(ln(l_first(a)));}
 lv*n_input(lv*self,lv*a){
@@ -83,7 +99,9 @@ lv* globals(void){
 	dset(env,lmistr("write"    ),lmnat(n_writefile,NULL));
 	dset(env,lmistr("path"     ),lmnat(n_path,NULL));
 	dset(env,lmistr("exit"     ),lmnat(n_exit,NULL));
+#ifndef _WIN32
 	dset(env,lmistr("shell"    ),lmnat(n_shell,NULL));
+#endif
 	dset(env,lmistr("eval"     ),lmnat(n_eval,NULL));
 	dset(env,lmistr("import"   ),lmnat(n_import,NULL));
 	dset(env,lmistr("random"   ),lmnat(n_random,NULL));
@@ -114,16 +132,35 @@ lv*n_import(lv*self,lv*a){
 // Entrypoint
 
 int main(int argc,char**argv){
+#ifdef _WIN32
+	/* Keep LF newlines so test fixtures and Unix tooling compare cleanly. */
+	_setmode(_fileno(stdout),_O_BINARY);
+	_setmode(_fileno(stderr),_O_BINARY);
+	/* Prefer UTF-8 for narrow path/file APIs when the system supports it. */
+	setlocale(LC_ALL,".UTF8");
+#endif
 	init_interns();
 	lv* env=globals();
 	lv* a=lml(argc);for(int z=0;z<argc;z++)a->lv[z]=lmutf8(argv[z]);
 	dset(env,lmistr("args"),a);
 	dset(env,lmistr("env"),env_enumerate());
 	char*home=getenv("LIL_HOME");if(home){
+#ifdef _WIN32
+		char wildcard[PATH_MAX];snprintf(wildcard,sizeof(wildcard),"%s\\*.lil",home);
+		WIN32_FIND_DATAA find;HANDLE d=FindFirstFileA(wildcard,&find);
+		if(d!=INVALID_HANDLE_VALUE){
+			do{
+				if(find.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY)continue;
+				char path[PATH_MAX];snprintf(path,sizeof(path),"%s\\%s",home,find.cFileName);
+				runfile(path,env);
+			}while(FindNextFileA(d,&find));FindClose(d);
+		}
+#else
 		struct dirent*find;DIR*dir=opendir(home);if(dir){while((find=readdir(dir))){
 			char path[4096];snprintf(path,sizeof(path),"%s/%s",home,find->d_name);
 			if(has_suffix(path,".lil"))runfile(path,env);
 		}}closedir(dir);
+#endif
 	}
 	for(int z=1;z<argc;z++){
 		if(!strcmp(argv[z],"-h")){

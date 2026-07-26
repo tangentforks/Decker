@@ -2,6 +2,10 @@
 
 let zoom=1, deck=null, fb=null, context=null, dirty=0
 let FONT_BODY=null,FONT_MENU=null,FONT_MONO=null
+// #region VFS (platform WebDAV remote open/save)
+let vfs_path=null, vfs_root=null, vfs_dir=null, vfs_busy=0, vfs_err=null
+let vfs_entries=[], vfs_pending_open=null
+// #endregion
 
 const DOUBLE_CLICK_DELAY=20
 const FIELD_CURSOR_DUTY =20
@@ -1337,6 +1341,142 @@ sound_record=_=>{
 
 // Modal Helpers
 
+// #region VFS helpers (same-origin /fs WebDAV)
+vfs_norm_dir=d=>{if(!d)return d;d=(''+d).replace(/\/+/g,'/');return d.length>1&&d.endsWith('/')?d.slice(0,-1):d}
+vfs_join=(dir,name)=>{
+	dir=vfs_norm_dir(dir);name=(''+name).replace(/^\/+/,'')
+	if(!name||name.includes('..'))throw new Error('invalid name')
+	return dir+'/'+name}
+vfs_basename=p=>{p=vfs_norm_dir(p)||'';const i=p.lastIndexOf('/');return i<0?p:p.slice(i+1)}
+vfs_parent=p=>{
+	p=vfs_norm_dir(p);if(!p||p===vfs_root)return vfs_root
+	const i=p.lastIndexOf('/');if(i<=0)return vfs_root
+	const parent=p.slice(0,i)
+	if(vfs_root&&!parent.startsWith(vfs_root))return vfs_root
+	return parent||vfs_root}
+vfs_ensure_deck=n=>{n=(''+n).trim();if(!n)n='untitled';return /\.deck$/i.test(n)?n:n+'.deck'}
+vfs_notify_host=_=>{
+	try{if(window.parent&&window.parent!==window)window.parent.postMessage({
+		type:'dkr-vfs-changed',path:vfs_path,dir:vfs_dir,root:vfs_root},'*')}catch(e){}}
+vfs_entries_table=_=>{
+	const r=lmt(),iv=[],nv=[];tab_set(r,'icon',iv),tab_set(r,'name',nv)
+	vfs_entries.forEach(e=>{
+		iv.push(lmn(e.isDir?ICON.dir:ICON.doc))
+		nv.push(lms(e.isDir&&e.name!='..'?e.name+'/':e.name))
+	});return r}
+vfs_ls=async dir=>{
+	dir=vfs_norm_dir(dir);const url=dir.endsWith('/')?dir:dir+'/'
+	const res=await fetch(url,{cache:'no-store'})
+	if(!res.ok)throw new Error('list failed ('+res.status+')')
+	const html=await res.text()
+	const doc=new DOMParser().parseFromString(html,'text/html')
+	const out=[]
+	Array.from(doc.querySelectorAll('li')).forEach(li=>{
+		let meta={};try{if(li.dataset.meta)meta=JSON.parse(li.dataset.meta)}catch(e){}
+		const isDir=!!(meta.is_dir||li.querySelector('details'))
+		let name
+		if(isDir)name=(li.querySelector('summary')?.textContent||'').trim()
+		else if(li.dataset.path)name=li.dataset.path.split('/').pop()
+		else name=(li.textContent||'').trim()
+		if(!name||name==='.'||name==='..')return
+		if(!isDir&&!/\.deck$/i.test(name))return
+		const path=li.dataset.path||vfs_join(dir,name)
+		out.push({name,isDir,path})
+	})
+	out.sort((a,b)=>a.isDir!==b.isDir?(a.isDir?-1:1):a.name.localeCompare(b.name))
+	return out}
+vfs_read=async path=>{
+	const res=await fetch(path,{cache:'no-store'})
+	if(!res.ok)throw new Error('read failed ('+res.status+')')
+	return res.text()}
+vfs_write=async(path,text)=>{
+	const res=await fetch(path,{method:'PUT',body:text})
+	if(!res.ok)throw new Error('write failed ('+res.status+')')}
+vfs_load=async path=>{
+	vfs_busy=1,vfs_err=null
+	try{
+		const text=await vfs_read(path)
+		load_deck(deck_read(clchars(text)))
+		vfs_path=path,vfs_dir=vfs_parent(path),dirty=0
+		vfs_notify_host()
+	}catch(e){vfs_err=''+(e.message||e);console.error('vfs_load',e)}
+	vfs_busy=0}
+vfs_save_current=async _=>{
+	if(!vfs_path){modal_enter('vfs_save');return}
+	vfs_busy=1,vfs_err=null
+	try{
+		await vfs_write(vfs_path,deck_write(deck))
+		dirty=0,vfs_notify_host()
+	}catch(e){vfs_err=''+(e.message||e);console.error('vfs_save',e)
+		modal_enter('alert'),ms.message=rtext_cast(lms('Save failed: '+vfs_err))}
+	vfs_busy=0}
+vfs_refresh_list=async dir=>{
+	if(!vfs_root)return
+	dir=vfs_norm_dir(dir||vfs_dir||vfs_root)
+	if(vfs_root&&!dir.startsWith(vfs_root))dir=vfs_root
+	vfs_busy=1,vfs_err=null
+	try{
+		const entries=await vfs_ls(dir)
+		const list=[]
+		if(dir!==vfs_root)list.push({name:'..',isDir:true,path:vfs_parent(dir)})
+		entries.forEach(e=>list.push(e))
+		vfs_dir=dir,vfs_entries=list
+		if(ms.type=='vfs_open'||ms.type=='vfs_save')ms.grid=gridtab(vfs_entries_table(),-1)
+	}catch(e){
+		vfs_err=''+(e.message||e);console.error('vfs_ls',e)
+		vfs_entries=[];if(ms.type=='vfs_open'||ms.type=='vfs_save')ms.grid=gridtab(vfs_entries_table(),-1)
+	}
+	vfs_busy=0}
+vfs_activate_row=_=>{
+	const row=ms.grid?ms.grid.row:-1
+	if(row<0||row>=vfs_entries.length)return
+	const e=vfs_entries[row]
+	if(e.isDir){vfs_refresh_list(e.path);return}
+	if(ms.type=='vfs_save'){
+		// pick name into field when clicking a file
+		ms.text=fieldstr(lms(e.name));return}
+	// open file
+	if(dirty){
+		vfs_pending_open=e.path
+		modal_enter('confirm_vfs_open')
+		ms.message=lms('The current deck has unsaved changes.\nDiscard and open this file?')
+		ms.verb=lms('Discard')
+	}else{vfs_load(e.path).then(_=>modal_exit(1))}
+}
+vfs_bootstrap=_=>{
+	try{
+		if(window.__DKR_VFS__){
+			const v=window.__DKR_VFS__
+			if(v.root)vfs_root=vfs_norm_dir(v.root)
+			if(v.path)vfs_path=v.path
+			if(v.dir)vfs_dir=vfs_norm_dir(v.dir)
+			else if(vfs_path)vfs_dir=vfs_parent(vfs_path)
+			else vfs_dir=vfs_root
+		}
+		const p=location.pathname||''
+		let m=p.match(/^\/dk\/([^/]+)\/(.+)$/)
+		if(!m)m=p.match(/^\/fs\/([^/]+)\/(.+)$/)
+		if(m){
+			const user=m[1],rest=m[2]
+			const mount=rest.split('/')[0]
+			if(!vfs_root)vfs_root='/fs/'+user+'/'+mount
+			if(/\.deck$/i.test(rest)){
+				vfs_path='/fs/'+user+'/'+rest
+				vfs_dir=vfs_parent(vfs_path)
+			}else if(!vfs_dir)vfs_dir=vfs_root
+		}
+	}catch(e){console.error('vfs_bootstrap',e)}
+}
+window.addEventListener('message',ev=>{
+	const d=ev.data;if(!d||d.type!=='dkr-vfs')return
+	if(d.root)vfs_root=vfs_norm_dir(d.root)
+	if(d.path)vfs_path=d.path
+	if(d.dir)vfs_dir=vfs_norm_dir(d.dir)
+	else if(vfs_path)vfs_dir=vfs_parent(vfs_path)
+	else if(vfs_root)vfs_dir=vfs_root
+})
+// #endregion
+
 table_decode=(text,format)=>ms.edit_json?monad.table(dyad.parse(lms('%J'),text)): n_readcsv(count(format)?[text,format]:[text])
 transit_enumerate=_=>monad.table(monad.keys(deck.transit))
 sounds_enumerate=_=>{
@@ -1505,12 +1645,23 @@ modal_enter=type=>{
 	if(type=='input_lil'     )ms.type=type='input'
 	if(type=='confirm_new'   )ms.type=type='confirm'
 	if(type=='confirm_script')ms.type=type='confirm'
+	if(type=='confirm_vfs_open')ms.type=type='confirm'
 	if(type=='multiscript'   )ms.type=type='confirm'
 	if(type=='save_deck'     )ms.type=type='save',ms.text=fieldstr(dname(deck.name,'.deck')),ms.desc='Save a .deck or .html file.'
 	if(type=='save_locked'   )ms.type=type='save',ms.text=fieldstr(dname(deck.name,'.html')),ms.desc='Save locked standalone deck as an .html file.'
 	if(type=='export_image'  )ms.type=type='save',ms.text=fieldstr(lms('image.gif'   )),ms.desc='Save a .gif image file.'
 	if(type=='save_lil'      )ms.type=type='save',ms.text=fieldstr(lms('untitled.txt')),ms.desc='Save a text file.'
 	if(type=='input'         )ms.text=fieldstr(lms(''))
+	if(type=='vfs_open'){
+		ms.grid=gridtab(lmt(),-1),vfs_entries=[]
+		vfs_refresh_list(vfs_dir||vfs_root)
+	}
+	if(type=='vfs_save'){
+		ms.grid=gridtab(lmt(),-1),vfs_entries=[]
+		const base=vfs_path?vfs_basename(vfs_path):ls(ifield(deck,'name')||lms('untitled'))
+		ms.text=fieldstr(lms(vfs_ensure_deck(base||'untitled')))
+		vfs_refresh_list(vfs_dir||vfs_root)
+	}
 }
 modal_exit=value=>{
 	wid=ms.old_wid
@@ -1555,6 +1706,10 @@ modal_exit=value=>{
 	if(ms.type=='widpattern'&&value!=-1)ob_edit_prop('pattern',lmn(value))
 	if(ms.subtype=='confirm_new'   &&value)load_deck(deck_read(''))
 	if(ms.subtype=='confirm_script'&&value)finish_script()
+	if(ms.subtype=='confirm_vfs_open'&&value){
+		const p=vfs_pending_open;vfs_pending_open=null
+		if(p)vfs_load(p)
+	}
 	if(ms.subtype=='multiscript'   &&value)setscript(ob.sel)
 	if(ms.subtype=='alert_lil'  )arg(),ret(lmn(value))
 	if(ms.subtype=='confirm_lil')arg(),ret(lmn(value))
@@ -1945,6 +2100,52 @@ modals=_=>{
 		if(ms.pending_grid_cell_rich){ui_richedit(c,1,ms.text)}else{ui_field(c,ms.text)}
 		if(ev.click&&!over(c))modal_exit(1)
 		if(ev.exit)modal_exit(0)
+	}
+	else if(ms.type=='vfs_open'||ms.type=='vfs_save'){
+		const isSave=ms.type=='vfs_save'
+		const b=draw_modalbox(rect(280,frame.size.y-46))
+		const title=isSave?'Save As':('Open'+(vfs_busy?'…':''))
+		draw_textc(rect(b.x,b.y-5,b.w,20),title,FONT_MENU,1)
+		const pathLabel=vfs_dir||vfs_root||'(no remote folder)'
+		draw_text_fit(rect(b.x,b.y+14,b.w,14),pathLabel,FONT_BODY,1)
+		const gsize=rect(b.x,b.y+30,b.w,b.h-(isSave?20+5+20+5+20:20+5+20)-16)
+		draw_box(gsize,0,1)
+		if(vfs_err)draw_text_fit(inset(gsize,4),'Error: '+vfs_err,FONT_BODY,1)
+		else if(vfs_busy&&!vfs_entries.length)draw_text_fit(inset(gsize,4),'Loading…',FONT_BODY,1)
+		else{
+			const choose=ui_table(gsize,[16,gsize.w-38],'Is',ms.grid)
+			if(choose)vfs_activate_row()
+		}
+		if(isSave){
+			draw_text(rect(b.x,b.y+b.h-45,56,18),'Name',FONT_MENU,1)
+			ui_field(rect(b.x+40,b.y+b.h-47,b.w-40,18),ms.text)
+		}
+		const c=rect(b.x+b.w-60,b.y+b.h-20)
+		const row=ms.grid?ms.grid.row:-1
+		const sel=row>=0&&row<vfs_entries.length?vfs_entries[row]:null
+		if(isSave){
+			if(ui_button(rect(c.x,c.y,60,20),'Save',!vfs_busy&&!!vfs_root,_=>{
+				let raw=ls(rtext_string(ms.text.table)).replace(/[\\/]/g,'').trim()
+				const name=vfs_ensure_deck(raw||'untitled')
+				try{
+					const dest=vfs_join(vfs_dir||vfs_root,name)
+					vfs_busy=1,vfs_err=null
+					vfs_write(dest,deck_write(deck)).then(_=>{
+						vfs_path=dest,vfs_dir=vfs_parent(dest),dirty=0,vfs_busy=0
+						vfs_notify_host(),modal_exit(1)
+					}).catch(e=>{
+						vfs_busy=0,vfs_err=''+(e.message||e)
+						console.error('vfs_save_as',e)
+					})
+				}catch(e){vfs_err=''+(e.message||e)}
+			})){}
+			c.x-=65
+		}else{
+			const canOpen=!!sel&&!vfs_busy
+			if(ui_button(rect(c.x,c.y,60,20),sel&&sel.isDir?'Open':('Open'),canOpen,_=>vfs_activate_row())){}
+			c.x-=65
+		}
+		if(ui_button(rect(c.x,c.y,60,20),'Cancel',1)||ev.exit)modal_exit(0)
 	}
 	else if(ms.type=='save'){
 		const l=layout_plaintext(ms.desc,FONT_BODY,ALIGN.center,rect(250,100))
@@ -3331,8 +3532,14 @@ all_menus=_=>{
 		}
 		if(menu_item('New Card',1)){const c=deck_add(deck,lms('card')), n=ln(ifield(ifield(deck,'card'),'index'));iwrite(c,lms('index'),lmn(n+1)),n_go([c],deck)}
 		menu_separator()
-		menu_item('Open...',1,0,_=>open_text('.html,.deck',text=>{load_deck(deck_read(text))}))
-		if(menu_item('Save As...',1))modal_enter('save_deck')
+		// remote WebDAV (platform /fs) — enabled when vfs_root is known
+		const vfs_ok=!!vfs_root&&!vfs_busy
+		if(menu_item('Open...',vfs_ok,0,_=>modal_enter('vfs_open'))){}
+		if(menu_item('Save',vfs_ok,0,_=>vfs_save_current())){}
+		if(menu_item('Save As...',vfs_ok,0,_=>modal_enter('vfs_save'))){}
+		menu_separator()
+		menu_item('Import Deck...',1,0,_=>open_text('.html,.deck',text=>{load_deck(deck_read(text))}))
+		if(menu_item('Export Deck...',1))modal_enter('save_deck')
 		menu_separator()
 		menu_item("Import Image...",1,0,_=>{open_file('image/*',load_image)})
 		if(menu_item("Export Image...",1))modal_enter('export_image')
@@ -4017,4 +4224,5 @@ q('body').ondrop=e=>{
 
 pushstate(lmenv()),load_deck(deck_read(q('script[language="decker"]').innerText))
 const tag=decodeURI(document.URL.split('#')[1]||'');if(tag.length)iwrite(deck,lms('card'),lms(tag))
+vfs_bootstrap()
 resize(),requestAnimationFrame(loop)

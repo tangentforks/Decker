@@ -1073,9 +1073,19 @@ FONTS={
 }
 
 COLORS=[
-	0xFFFFFFFF,0xFFFFFF00,0xFFFF6500,0xFFDC0000,0xFFFF0097,0xFF360097,0xFF0000CA,0xFF0097FF,
+	0xFFFFFFFF,0xFFFFFF00,0xFFFF6500,0xFFDC0000,0xFFFF0097,0xFF360097,0xFF0000CA,0xFF0097FF, // classic 16 (0-15)
 	0xFF00A800,0xFF006500,0xFF653600,0xFF976536,0xFFB9B9B9,0xFF868686,0xFF454545,0xFF000000,
+	0xFFFFD5D5,0xFFFF8A8A,0xFFFF3B3B,0xFFE11212,0xFF9B0A0A,0xFF5A0303, // reds     (16-21)
+	0xFFFFE6C8,0xFFFFC182,0xFFFF8A2B,0xFFE06A00,0xFF9E4A00,0xFF5E2C00, // oranges  (22-27)
+	0xFFFFFAD0,0xFFFFEE95,0xFFFFD400,0xFFD9AE00,0xFF9A7B00,0xFF5C4A00, // yellows  (28-33)
+	0xFFD6F5D6,0xFF8FE08F,0xFF33C233,0xFF0E9B0E,0xFF076907,0xFF033A03, // greens   (34-39)
+	0xFFCFF5F0,0xFF7FE0D5,0xFF1FC4B4,0xFF0E9C90,0xFF076B62,0xFF033B36, // teals    (40-45)
+	0xFFD2E4FF,0xFF8FBEFF,0xFF2E86FF,0xFF0A5AD9,0xFF063E9B,0xFF03215A, // blues    (46-51)
+	0xFFE6D5FF,0xFFBE8FFF,0xFF8A3BFF,0xFF6212E1,0xFF430A9B,0xFF26035A, // purples  (52-57)
+	0xFFFFD5F0,0xFFFF8FD5,0xFFFF3BAE,0xFFE01288,0xFF9B0A5C,0xFF5A0333, // magentas (58-63)
 ]
+NCOLOR=64                // palette color slots (pixel values 32..95)
+NCOLROW=NCOLOR*3/8       // rows of the 8-wide patterns image used to store colors (24)
 DEFAULT_COLORS=COLORS.slice(0)
 BRUSHES=[
 	0x00,0x00,0x00,0x10,0x00,0x00,0x00,0x00, 0x00,0x00,0x10,0x38,0x10,0x00,0x00,0x00,
@@ -2014,30 +2024,34 @@ n_sound=([x])=>!x?sound_read(0): lis(x)?sound_read(ls(x)): lin(x)?sound_read(ln(
 
 pal_col_get=(pal,c)=>{const b=(8*224)+(3*c);return 0xFF000000|((pal[b]<<16)|(pal[b+1]<<8)|pal[b+2])}
 pal_col_set=(pal,c,x)=>{const b=(8*224)+(3*c);pal[b]=0xFF&(x>>16),pal[b+1]=0xFF&(x>>8),pal[b+2]=0xFF&x}
-pick_palette=deck=>{for(let z=0;z<16;z++)COLORS[z]=pal_col_get(deck.patterns.pal.pix,z)}
+pick_palette=deck=>{for(let z=0;z<NCOLOR;z++)COLORS[z]=pal_col_get(deck.patterns.pal.pix,z)}
 patterns_read=x=>{
 	const set=(pal,p,x,y,v)=>pal[(x%8)+(8*(y%8))+(8*8*p)]=v
 	const ri=lmi((self,i,x)=>{
 		let r=null, t=i&&ln(i)?ln(i):0
 		if(x){
 			if(t>= 2&&t<=27&&image_is(x)){for(let a=0;a<8;a++)for(let b=0;b<8;b++)set(self.pal.pix,t,b,a,lb(iwrite(x,lmpair(rect(b,a)))))}
-			if(t>=28&&t<=31){r=ll(x);if(r.length>256)r=r.slice(0,256);self.anim[t-28]=r.map(x=>{const f=clamp(0,ln(x),47);return f>=28&&f<=31?0:f});r=lml(r)}
-			if(t>=32&&t<=47){pal_col_set(self.pal.pix,t-32,0xFF000000|ln(x));r=x}
+			if(t>=28&&t<=31){r=ll(x);if(r.length>256)r=r.slice(0,256);self.anim[t-28]=r.map(x=>{const f=clamp(0,ln(x),95);return f>=28&&f<=31?0:f});r=lml(r)}
+			if(t>=32&&t<=31+NCOLOR){pal_col_set(self.pal.pix,t-32,0xFF000000|ln(x));r=x}
 		}else{
 			if(t>= 0&&t<=27){r=image_copy(self.pal,rect(0,t*8,8,8))}
 			if(t>=28&&t<=31){r=lml(self.anim[t-28].map(lmn))}
-			if(t>=32&&t<=47){r=lmn(0xFFFFFF&pal_col_get(self.pal.pix,t-32))}
+			if(t>=32&&t<=31+NCOLOR){r=lmn(0xFFFFFF&pal_col_get(self.pal.pix,t-32))}
 		}return r?r:x?x:NIL
 	},'patterns')
 	let i=image_read(x.patterns?ls(x.patterns):DEFAULT_PATTERNS)
-	if(i.size.x!=8||i.size.y!=224+6){i=image_resize(i,rect(8,224+6));for(let z=0;z<16;z++)pal_col_set(i.pix,z,DEFAULT_COLORS[z])}
+	if(i.size.x!=8||i.size.y!=224+NCOLROW){
+		const stored=(i.size.x==8&&i.size.y>224)?min(NCOLOR,0|((i.size.y-224)*8/3)):0 // colors this deck persisted (older decks stored fewer)
+		i=image_resize(i,rect(8,224+NCOLROW)) // crop/pad: preserves any stored colors by coordinate
+		for(let z=stored;z<NCOLOR;z++)pal_col_set(i.pix,z,DEFAULT_COLORS[z])
+	}
 	ri.pal=i
 	ri.anim=JSON.parse(DEFAULT_ANIMS);if(x.animations&&lil(x.animations))ll(x.animations).map((x,i)=>iindex(ri,28+i,x))
 	return ri
 }
 patterns_write=x=>{
 	const p=x.pal.pix, c=DEFAULT_COLORS.some((x,i)=>(0xFFFFFF&x)!=(0xFFFFFF&pal_col_get(p,i)))
-	return image_write(image_resize(image_copy(x.pal),rect(8,224+(6*c))))
+	return image_write(image_resize(image_copy(x.pal),rect(8,224+(NCOLROW*c))))
 }
 anims_write=x=>lml(x.anim.map(x=>lml(x.map(lmn))))
 

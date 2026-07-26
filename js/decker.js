@@ -64,7 +64,7 @@ writegif=(frames,delays,palette,pal_size)=>{
 	const size=frames.reduce((s,f)=>rmax(s,f.size),rect(1,1)), pal=deck.patterns.pal.pix; let frame_index=0, payload=[]
 	const anim_ants       =(x,y)=>(0|((x+y+frame_index)/3))%2?15:0
 	const draw_pattern    =(pix,x,y)=>pix<2?(pix?1:0): pix>31?(pix==32?0:1): pal_pat(pal,pix,x,y)&1
-	const draw_color_trans=(pix,x,y)=>pix==ANTS?anim_ants(x,y): pix==0?16: pix>47?0: pix>31?pix-32: draw_pattern(pix,x,y)?15:0
+	const draw_color_trans=(pix,x,y)=>pix==ANTS?anim_ants(x,y): pix==0?NCOLOR: pix>31+NCOLOR?0: pix>31?pix-32: draw_pattern(pix,x,y)?15:0
 	const b=x=>payload.push(x&0xFF), s=x=>{b(x);b(x>>8)}, t=x=>x.split('').forEach(x=>b(x.charCodeAt(0)))
 	t('GIF89a'),s(size.x),s(size.y) // header, dimensions
 	if(pal_size){
@@ -73,10 +73,10 @@ writegif=(frames,delays,palette,pal_size)=>{
 		b(0),b(0)                       // background color is 0, 1:1 pixel aspect ratio
 		for(let z=0;z<pal_size;z++)b(palette[z]>>16),b(palette[z]>>8),b(palette[z]) // global colortable
 	}else{
-		b(0xF4)                         // global colortable, 8-bits per channel, 32 colors
+		b(0xF6)                         // global colortable, 8-bits per channel, 128 colors
 		b(0),b(0)                       // background color is 0, 1:1 pixel aspect ratio
-		for(let z=0;z<16;z++)b(COLORS[z]>>16),b(COLORS[z]>>8),b(COLORS[z]) // global colortable
-		for(let z=0;z<16;z++)b(0xFF         ),b(0xFF        ),b(0xFF     ) // padding entries
+		for(let z=0;z<NCOLOR;z++)b(COLORS[z]>>16),b(COLORS[z]>>8),b(COLORS[z]) // global colortable
+		for(let z=NCOLOR;z<128;z++)b(0xFF     ),b(0xFF        ),b(0xFF     ) // padding entries (index NCOLOR is transparent)
 	}
 	s(0xFF21),b(11),t('NETSCAPE2.0'),b(3),b(1),s(0),b(0)               // NAB; loop gif forever
 	for(let z=0;z<frames.length;z++){
@@ -84,11 +84,11 @@ writegif=(frames,delays,palette,pal_size)=>{
 		s(0xF921),b(4)                            // graphic control extension
 		b(pal_size&&paltrans==-1?8:9)             // dispose to bg + has transparency
 		s(delays[z])                              // 100ths of a second delay
-		b(pal_size&&paltrans==-1?0: pal_size?paltrans: 16) // transparent color index, if any
+		b(pal_size&&paltrans==-1?0: pal_size?paltrans: NCOLOR) // transparent color index, if any
 		b(0)                                      // end GCE
 		b(0x2C)                                   // image descriptor
 		s(0),s(0),s(frame.size.x),s(frame.size.y) // dimensions
-		const lws=pal_size?max(2,Math.log2(pal_size)): 5
+		const lws=pal_size?max(2,Math.log2(pal_size)): 7
 		b(0),b(lws)                               // no local colortable,  minimum LZW code size
 		let bo=payload.length
 		const t=[];for(let y=0;y<frame.size.y;y++)for(let x=0;x<frame.size.x;x++){
@@ -1862,7 +1862,7 @@ modals=_=>{
 			if(sver<dver)can_copy=1,copy_message='>> Downgrade >>'
 		}
 		if(ui_button(cb,copy_message,can_copy&&ms.grid.row>-1)){
-			if(patterns_is(sel)){const dst=ifield(deck,'patterns');for(let z=2;z<=47;z++)iindex(dst,z,iindex(sel,z))}
+			if(patterns_is(sel)){const dst=ifield(deck,'patterns');for(let z=2;z<=31+NCOLOR;z++)iindex(dst,z,iindex(sel,z))}
 			else if(module_is(sel)||prototype_is(sel)){deck_add(deck,sel)}
 			else{deck_add(deck,sel,rvalue(ms.grid,'name'))}
 			ms.grid2=gridtab(res_enumerate(deck)),mark_dirty();if(module_is(sel))validate_modules()
@@ -1888,7 +1888,7 @@ modals=_=>{
 			const c=frame.clip,pal=sel.pal.pix;frame.clip=pre;
 			const anim_ants   =(x,y)=>(0|((x+y+(0|(frame_count/2)))/3))%2?15:0
 			const draw_pattern=(pix,x,y)=>pix<2?(pix?1:0): pix>31?(pix==32?0:1): pal_pat(pal,pix,x,y)&1
-			const draw_color  =(pix,x,y)=>pix==ANTS?anim_ants(x,y): pix>47?0: pix>31?pix-32: draw_pattern(pix,x,y)?15:0
+			const draw_color  =(pix,x,y)=>pix==ANTS?anim_ants(x,y): pix>31+NCOLOR?0: pix>31?pix-32: draw_pattern(pix,x,y)?15:0
 			for(let z=0;z<32;z++)for(let y=0;y<16;y++)for(let x=0;x<16;x++){
 				const h=rect(3+x+pre.x+16*(z%(0|(pre.w/16))), y+pre.y+16*(0|(z/(0|(pre.w/16)))))
 				if(inclip(h))pix(h,32+draw_color(z,x,y))
@@ -3072,7 +3072,7 @@ toolbars=_=>{
 		const animated=rin(rect(c.x,c.y,c.width,c.height),ev.rawpos)&&dr.show_anim?(0|(frame_count/4)):0
 		const anim_pattern=(pix,x,y)=>pix<28||pix>31?pix: anim[pix-28][animated%max(1,anim[pix-28].length)]
 		const draw_pattern=(pix,x,y)=>pix<2?(pix?1:0): pix>31?(pix==32?0:1): pal_pat(pal,pix,x,y)&1
-		const draw_color  =(pix,x,y)=>pix>47?0: pix>31?pix-32: draw_pattern(pix,x,y)?15:0
+		const draw_color  =(pix,x,y)=>pix>31+NCOLOR?0: pix>31?pix-32: draw_pattern(pix,x,y)?15:0
 		const data=tid.data;for(let z=0,d=0,y=0;y<tid.height;y++)for(let x=0;x<tid.width;x++,z++){
 			const pix=tfb.pix[z], a=anim_pattern(pix,x,y), c=draw_color(a,x,y), cv=COLORS[c]
 			data[d++]=0xFF&(cv>>16),data[d++]=0xFF&(cv>>8),data[d++]=0xFF&(cv),data[d++]=0xFF
@@ -3143,7 +3143,7 @@ toolbars=_=>{
 		draw_rect(rect(0,16*tcellh,toolsize.x,tgap),1)
 		if(modebtn(pos,dn,rect(0,0     ,tcellw*2+1,tcellh+1),'Stroke',dr.pickfill==0))dr.pickfill=0
 		if(modebtn(pos,dn,rect(0,tcellh,tcellw*2+1,tcellh+1),'Fill'  ,dr.pickfill==1))dr.pickfill=1
-		if(dr.color){for(let z=0;z<16 ;z++)palbtn(pos,dn,rect(0,(2*tcellh)+z*tcellh,2*tcellw+1,tcellh+1),(z>=2?31:0)+z)}
+		if(dr.color){const cw=0|((2*tcellw+1)/4);for(let z=0;z<NCOLOR;z++)palbtn(pos,dn,rect((z%4)*cw,(2*tcellh)+(0|(z/4))*tcellh,cw+1,tcellh+1),32+z)}
 		else        {for(let z=0;z<4*8;z++)palbtn(pos,dn,rect((z%2)*tcellw,(2*tcellh)+(0|(z/2))*tcellh+(z>=28?tgap:0),tcellw+1,tcellh+1),patorder[z])}
 	})
 }
@@ -3768,7 +3768,7 @@ sync=_=>{
 	const anim_ants   =(x,y)=>(0|((x+y+(0|(frame_count/2)))/3))%2?15:0
 	const anim_pattern=(pix,x,y)=>pix<28||pix>31?pix: anim[pix-28][fc%max(1,anim[pix-28].length)]
 	const draw_pattern=(pix,x,y)=>pix<2?(pix?1:0): pix>31?(pix==32?0:1): pal_pat(pal,pix,x,y)&1
-	const draw_color  =(pix,x,y)=>pix==ANTS?anim_ants(x,y): pix>47?0: pix>31?pix-32: draw_pattern(pix,x,y)?15:0
+	const draw_color  =(pix,x,y)=>pix==ANTS?anim_ants(x,y): pix>31+NCOLOR?0: pix>31?pix-32: draw_pattern(pix,x,y)?15:0
 	if(!id||id.width!=fb.size.x||id.height!=fb.size.y){id=new ImageData(fb.size.x,fb.size.y);id.data.fill(0xFF)}
 	for(let z=0,d=0,y=0;y<id.height;y++)for(let x=0;x<id.width;x++,z++,d+=4){
 		const pix=fb.pix[z], a=anim_pattern(pix,x,y), c=(a==0&&mask)?13:draw_color(a,x,y), cv=COLORS[c]

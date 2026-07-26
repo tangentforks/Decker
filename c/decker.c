@@ -1865,7 +1865,7 @@ void modals(void){
 			if(sver<dver)can_copy=1,copy_message=">> Downgrade >>";
 		}
 		if(ui_button(cb,copy_message,can_copy&&ms.grid.row>-1)){
-			if(patterns_is(sel)){lv*dst=ifield(deck,"patterns");for(int z=2;z<=47;z++)iindex(dst,z,iindex(sel,z,NULL));}
+			if(patterns_is(sel)){lv*dst=ifield(deck,"patterns");for(int z=2;z<=31+NCOLOR;z++)iindex(dst,z,iindex(sel,z,NULL));}
 			else if(module_is(sel)||prototype_is(sel)){n_deck_add(deck,l_list(sel));}
 			else{n_deck_add(deck,lml2(sel,rvalue(grid,"name")));}
 			ms.grid2=(grid_val){res_enumerate(deck),0,-1,-1},mark_dirty();
@@ -3447,7 +3447,7 @@ void rtoolbar(pair pos,pair dn){
 	memset(frame.buffer->sv,0,frame.buffer->c),draw_box((rect){0,0,size.x,size.y},0,1),draw_rect((rect){0,16*tcellh,size.x,tgap},1);
 	if(modebtn(pos,dn,(rect){0,0     ,tcellw*2+1,tcellh+1},"Stroke",dr.pickfill==0))dr.pickfill=0;
 	if(modebtn(pos,dn,(rect){0,tcellh,tcellw*2+1,tcellh+1},"Fill"  ,dr.pickfill==1))dr.pickfill=1;
-	if(dr.color){for(int z=0;z<16 ;z++)palbtn(pos,dn,(rect){0,(2*tcellh)+z*tcellh,2*tcellw+1,tcellh+1},(z>=2?31:0)+z);}
+	if(dr.color){int cw=(2*tcellw+1)/4;for(int z=0;z<NCOLOR;z++)palbtn(pos,dn,(rect){(z%4)*cw,(2*tcellh)+(z/4)*tcellh,cw+1,tcellh+1},32+z);}
 	else        {for(int z=0;z<4*8;z++)palbtn(pos,dn,(rect){(z%2)*tcellw,(2*tcellh)+(z/2)*tcellh+(z>=28?tgap:0),tcellw+1,tcellh+1},pp[z]);}
 }
 

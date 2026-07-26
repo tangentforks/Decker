@@ -1498,6 +1498,18 @@ window.addEventListener('message',ev=>{
 			if(ev.source)ev.source.postMessage({
 				type:'dkr-go-done',ok:false,error:''+(e&&e.message||e),to},ev.origin==='null'?'*':ev.origin)}
 		return}
+	// Host: { type:'dkr-toolbars', on?: boolean, color?: boolean }
+	// on defaults to true when omitted; color only applied when provided
+	if(d.type==='dkr-toolbars'){
+		if(d.on!==undefined)toolbars_enable=d.on?1:0
+		else toolbars_enable=1
+		if(d.color!==undefined)dr.color=d.color?1:0
+		try{if(typeof resize==='function')resize()}catch(e){}
+		if(ev.source)ev.source.postMessage({
+			type:'dkr-toolbars-done',ok:true,
+			toolbars:!!toolbars_enable,color:!!dr.color
+		},ev.origin==='null'?'*':ev.origin)
+		return}
 })
 // #endregion
 

@@ -4083,6 +4083,18 @@ q('body').onwheel=e=>ev.scroll=e.deltaY<0?-1:e.deltaY>0?1:0
 q('body').onkeydown=e=>{
 	initaudio()
 	keypress[e.key]=!keydown[e.key],keydown[e.key]=1
+	// F-keys: match native Decker; preventDefault early so Chrome keeps less of them (esp. F5)
+	const fk=e.key.match(/^F(\d+)$/)
+	if(fk){
+		const n=+fk[1]
+		if(n>=1&&n<=12){
+			e.preventDefault()
+			if((uimode=='interact'||uimode=='object'||uimode=='draw')&&ms.type==null&&!kc.on&&deck&&!lb(ifield(deck,'locked'))){
+				if(n==1)setmode('interact')
+				else if(n==2)setmode('object')
+				else if(n>=3&&n<=12)settool(tooltypes[n-3]) // F3..F12 → tools 0..9
+			}
+			return}}
 	if(e.shiftKey)ev.shift=1
 	if(e.key=='ArrowUp'   )ev.dir='up'
 	if(e.key=='ArrowDown' )ev.dir='down'

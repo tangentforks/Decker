@@ -1468,12 +1468,36 @@ vfs_bootstrap=_=>{
 	}catch(e){console.error('vfs_bootstrap',e)}
 }
 window.addEventListener('message',ev=>{
-	const d=ev.data;if(!d||d.type!=='dkr-vfs')return
-	if(d.root)vfs_root=vfs_norm_dir(d.root)
-	if(d.path)vfs_path=d.path
-	if(d.dir)vfs_dir=vfs_norm_dir(d.dir)
-	else if(vfs_path)vfs_dir=vfs_parent(vfs_path)
-	else if(vfs_root)vfs_dir=vfs_root
+	const d=ev.data;if(!d||typeof d!=='object')return
+	// Host sets WebDAV session paths for remote Open/Save
+	if(d.type==='dkr-vfs'){
+		if(d.root)vfs_root=vfs_norm_dir(d.root)
+		if(d.path)vfs_path=d.path
+		if(d.dir)vfs_dir=vfs_norm_dir(d.dir)
+		else if(vfs_path)vfs_dir=vfs_parent(vfs_path)
+		else if(vfs_root)vfs_dir=vfs_root
+		return}
+	// Host navigates cards: { type:'dkr-go', to: 0 | 'cardName' | 'Next'|... }
+	// Optional: t / delay forwarded to n_go as transition args
+	if(d.type==='dkr-go'){
+		if(typeof deck==='undefined'||!deck||typeof n_go!=='function')return
+		const to=d.to
+		let x=null
+		if(typeof to==='number'&&isFinite(to))x=lmn(to)
+		else if(typeof to==='string')x=lms(to)
+		else return
+		const args=[x]
+		if(d.t!=null)args.push(typeof d.t==='string'?lms(d.t):d.t)
+		if(d.delay!=null)args.push(lmn(d.delay))
+		try{
+			const r=n_go(args,deck)
+			if(ev.source)ev.source.postMessage({
+				type:'dkr-go-done',ok:true,card:ln(r),to},ev.origin==='null'?'*':ev.origin)
+		}catch(e){
+			console.error('dkr-go',e)
+			if(ev.source)ev.source.postMessage({
+				type:'dkr-go-done',ok:false,error:''+(e&&e.message||e),to},ev.origin==='null'?'*':ev.origin)}
+		return}
 })
 // #endregion
 
